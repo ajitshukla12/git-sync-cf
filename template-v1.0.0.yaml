@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Create a VPC and launch AWS DMS inside the VPC.
+
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: PrivateDMSVPC
+
+  # Private Subnet for DMS
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.2.0/24
+      VpcId: !Ref MyVPC
+      AvailabilityZone: !Select
+        - 1
+        - !GetAZs ''
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet1
+
+  # Public Subnet for NAT Gateway
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: 10.0.1.0/24
+      VpcId: !Ref MyVPC
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: PublicSubnet1
+
+  # Internet Gateway attach the VPC
+  MyInternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref MyInternetGateway
+
+  # Elastic IP for constant IP
+  MyEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  # Net gateway attach to the public subnet
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt MyEIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  # Route Table for Public Subnet (for NAT Gateway)
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyInternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  # Route Table for Private Subnet (NAT Gateway for internet access)
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: PrivateRouteTable
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Group for DMS
+  DMSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for DMS replication instance
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0
+
+  # DMSIAMRole:
+  #   Type: AWS::IAM::Role
+  #   Properties:
+  #     RoleName: "dms-vpc-role"
+  #     AssumeRolePolicyDocument:
+  #       Version: 2012-10-17
+  #       Statement:
+  #         - Effect: Allow
+  #           Principal:
+  #             Service:
+  #               - dms.amazonaws.com
+  #           Action:
+  #             - "sts:AssumeRole"
+  #     ManagedPolicyArns:
+  #       - arn:aws:iam::aws:policy/service-role/AmazonDMSVPCManagementRole
+  #       - arn:aws:iam::aws:policy/service-role/AmazonDMSCloudWatchLogsRole
+        #- arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess # Optional, use if interacting with S3
+      Path: /
+
+  # DMS Subnet Group (Private Subnet)
+  DMSReplicationSubnetGroup:
+    Type: AWS::DMS::ReplicationSubnetGroup
+    Properties:
+      ReplicationSubnetGroupIdentifier: dms-private-subnet-group
+      ReplicationSubnetGroupDescription: Private subnet group for DMS
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PublicSubnet1
+
+  # DMS Replication Instance in Private Subnet
+  DMSReplicationInstance:
+    Type: AWS::DMS::ReplicationInstance
+    # DependsOn: DMSIAMRole
+    Properties:
+      ReplicationInstanceIdentifier: dms-private-instance
+      ReplicationInstanceClass: dms.t3.medium
+      AllocatedStorage: 10
+      VpcSecurityGroupIds:
+        - !Ref DMSSecurityGroup
+      ReplicationSubnetGroupIdentifier: !Ref DMSReplicationSubnetGroup
+      AvailabilityZone: !Select
+        - 0
+        - !GetAZs ''
+      # Optional: Add KMS Key for encryption if needed
+      #   KmsKeyId: !Ref KmsKey 
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref MyVPC
+
+  DMSInstanceId:
+    Description: DMS Replication Instance ID
+    Value: !Ref DMSReplicationInstance
