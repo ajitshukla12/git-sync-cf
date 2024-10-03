@@ -174,9 +174,7 @@ Resources:
       ImageId: ami-0ebfd941bbafe70c6 
       SecurityGroupIds:
         - !Ref DMSSecurityGroup  
-      Tags:
-        - Key: Name
-          Value: MyEC2Instanc
+      
 
 Outputs:
   VPCId:
