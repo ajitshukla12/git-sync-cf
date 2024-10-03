@@ -165,6 +165,19 @@ Resources:
       # Optional: Add KMS Key for encryption if needed
       #   KmsKeyId: !Ref KmsKey 
 
+  #launch ec2 instance 
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      SubnetId: !Ref PublicSubnet1  
+      ImageId: ami-0ebfd941bbafe70c6 
+      SecurityGroupIds:
+        - !Ref DMSSecurityGroup  
+      Tags:
+        - Key: Name
+          Value: MyEC2Instanc
+
 Outputs:
   VPCId:
     Description: VPC ID
